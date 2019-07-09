@@ -52,7 +52,7 @@ function install_clt {
         # in Apple's SUS catalog
         touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
         # find the CLI Tools update
-        PROD=$(softwareupdate -l | grep "\*.*Command Line" | head -n 1 | awk -F"*" '{print $2}' | sed -e 's/^ *//' | tr -d '\n')
+        PROD=$(softwareupdate -l | grep "\*.*Command Line" | tail -n 1 | awk -F"*" '{print $2}' | sed -e 's/^ *//' | tr -d '\n')
         # install it
         softwareupdate -i "$PROD" --verbose
         rm /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
@@ -62,14 +62,19 @@ function install_clt {
     # https://devimages.apple.com.edgekey.net/downloads/xcode/simulators/index-3905972D-B609-49CE-8D06-51ADC78E07BC.dvtdownloadableindex
     else
         [ "$OSX_VERS" -eq 7 ] && DMGURL=http://devimages.apple.com.edgekey.net/downloads/xcode/command_line_tools_for_xcode_os_x_lion_april_2013.dmg
-        [ "$OSX_VERS" -eq 7 ] && ALLOW_UNTRUSTED=-allowUntrusted
         [ "$OSX_VERS" -eq 8 ] && DMGURL=http://devimages.apple.com.edgekey.net/downloads/xcode/command_line_tools_for_osx_mountain_lion_april_2014.dmg
 
         TOOLS=clitools.dmg
         curl "$DMGURL" -o "$TOOLS"
         TMPMOUNT=`/usr/bin/mktemp -d /tmp/clitools.XXXX`
         hdiutil attach "$TOOLS" -mountpoint "$TMPMOUNT"
-        installer $ALLOW_UNTRUSTED -pkg "$(find $TMPMOUNT -name '*.mpkg')" -target /
+        if [ "$OSX_VERS" -eq 7 ]; then
+            # using '-allowUntrusted' because Lion CLI tools are so old Apple never built another
+            # package that doesn't have an expired CA cert. (Expired February 15, 2015)
+            installer -pkg "$(find $TMPMOUNT -name '*.mpkg')" -allowUntrusted -target /
+        else
+            installer -pkg "$(find $TMPMOUNT -name '*.mpkg')" -target /
+        fi
         hdiutil detach "$TMPMOUNT"
         rm -rf "$TMPMOUNT"
         rm "$TOOLS"
@@ -82,6 +87,7 @@ setStatusMessage "Keep-alive: update existing sudo time stamp until we are finis
 while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
 
 export HOMEBREW_CASK_OPTS="--appdir=/Applications"
+export PATH=$HOME/Library/Python/2.7/bin:$PATH
 
 if [[ ! -f "/Library/Developer/CommandLineTools/usr/bin/clang" ]]; then
     setStatusMessage "Install the CLT"
@@ -91,12 +97,13 @@ fi
 # Install Ansible
 if ! exists pip; then
     setStatusMessage "Install PIP"
-    sudo easy_install --quiet pip
+    curl -s https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+    PYTHONWARNINGS=ignore:DEPRECATION python get-pip.py --user
 fi
 if ! exists ansible; then
     setStatusMessage "Install Ansible"
     pip install --upgrade setuptools --user python
-    sudo pip install -q ansible
+    PYTHONWARNINGS=ignore:DEPRECATION python -m pip install --user -q ansible
 fi
 
 setStatusMessage "Create necessary folders"
@@ -134,7 +141,7 @@ fi
 
 setStatusMessage "Get all the required roles"
 
-ansible-galaxy install -f -r config/requirements.yml -p roles
+ansible-galaxy install -f -r --force-with-deps config/requirements.yml -p roles
 
 if [ -f "config/$username.yml" ]; then
     setStatusMessage "Running the ansible playbook for $username"
