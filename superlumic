@@ -8,20 +8,7 @@ function setStatusMessage {
     printf "${IRed} --> ${BGreen}$1${Color_Off}\n" 1>&2
 }
 
-printf "${BGreen}   _________                         .__                .__        ${Color_Off}\n"
-printf "${BGreen}  /   _____/__ ________   ___________|  |  __ __  _____ |__| ____  ${Color_Off}\n"
-printf "${BGreen}  \_____  \|  |  \____ \_/ __ \_  __ \  | |  |  \/     \|  |/ ___\ ${Color_Off}\n"
-printf "${BGreen}  /        \  |  /  |_> >  ___/|  | \/  |_|  |  /  Y Y  \  \  \___ ${Color_Off}\n"
-printf "${BGreen} /_______  /____/|   __/ \___  >__|  |____/____/|__|_|  /__|\___  >${Color_Off}\n"
-printf "${BGreen}         \/      |__|        \/ http://superlumic.com \/        \/ ${Color_Off}\n\n"
-
-setStatusMessage "Checking if we need to ask for a sudo password"
-
-sudo -v
-export ANSIBLE_ASK_SUDO_PASS=True
-
 repo=$1
-username=$USER
 if [ ! -z "$2" ]; then
     username=$2
 fi
@@ -82,10 +69,6 @@ function install_clt {
     fi
 }
 
-setStatusMessage "Keep-alive: update existing sudo time stamp until we are finished"
-
-while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
-
 export HOMEBREW_CASK_OPTS="--appdir=/Applications"
 export PATH=$HOME/Library/Python/2.7/bin:$PATH
 
@@ -99,58 +82,32 @@ if ! exists pip; then
     setStatusMessage "Install PIP"
     curl -s https://bootstrap.pypa.io/get-pip.py -o get-pip.py
     PYTHONWARNINGS=ignore:DEPRECATION python get-pip.py --user
+    #sudo easy_install --quiet pip
 fi
 if ! exists ansible; then
     setStatusMessage "Install Ansible"
-    pip install --upgrade setuptools --user python
+    #pip install --upgrade setuptools --user python
     PYTHONWARNINGS=ignore:DEPRECATION python -m pip install --user -q ansible
 fi
 
-setStatusMessage "Create necessary folders"
-
-sudo mkdir -p /usr/local/superlumic
-sudo mkdir -p /usr/local/superlumic/roles
-sudo chmod -R g+rwx /usr/local/superlumic
-sudo chgrp -R admin /usr/local/superlumic
-
-if [ -d "/usr/local/superlumic/config" ]; then
-    setStatusMessage "Update your config from git"
-    cd /usr/local/superlumic/config
+if [ -d "mac-dev-playbook" ]; then
+    setStatusMessage "Updating mac-dev-playbook"
+    cd mac-dev-playbook
     git pull -q
 else
     if [ ! -z "$repo" ]; then
         setStatusMessage "Getting your config from your fork"
-        git clone -q $1 /usr/local/superlumic/config
+        git clone -q $1 mac-dev-playbook
+        cd mac-dev-playbook
     else
         setStatusMessage "Getting the default config"
-        git clone -q https://github.com/superlumic/superlumic-config.git /usr/local/superlumic/config
+        git clone -q https://github.com/geerlingguy/mac-dev-playbook.git mac-dev-playbook
+        cd mac-dev-playbook
     fi
-fi
-
-cd /usr/local/superlumic
-
-setStatusMessage "Create ansible.cfg"
-
-{ echo '[defaults]'; echo 'roles_path=/usr/local/superlumic/roles:/usr/local/superlumic/config/roles'; echo 'deprecation_warnings=False';} > ansible.cfg
-
-setStatusMessage "Checking for encrypted vault files"
-if grep --silent -R "$ANSIBLE_VAULT;.*;AES256" /usr/local/superlumic/config/ ; then
-    echo 'ask_vault_pass=yes' >> ansible.cfg
-    setStatusMessage "Set Ansible to ask for the Vault Password"
 fi
 
 setStatusMessage "Get all the required roles"
+ansible-galaxy install --force-with-deps -r requirements.yml
 
-ansible-galaxy install -f -r --force-with-deps config/requirements.yml -p roles
-
-if [ -f "config/$username.yml" ]; then
-    setStatusMessage "Running the ansible playbook for $username"
-    ansible-playbook -i "localhost," config/$username.yml $ANSIBLE_EXTRA_OPTS
-else
-    if [ "travis" = "$username" ]; then
-        setStatusMessage "Running the ansible playbook for $username but use roderik.yml as fallback"
-        ansible-playbook -i "localhost," config/roderik.yml $ANSIBLE_EXTRA_OPTS
-    else
-        triggerError "No playbook for $username found"
-    fi
-fi
+setStatusMessage "Running the ansible playbook for $username"
+ansible-playbook main.yml -i inventory -K
